@@ -1,0 +1,5 @@
+import { NextResponse } from "next/server";
+import { adminAuth } from "@/server/firebase/admin";
+import { calculateOrderPrice } from "@/server/pricing/calculateOrderPrice";
+import type { PricingCalculationRequest } from "@/types/api/order";
+export async function POST(request:Request){try{const body=(await request.json()) as PricingCalculationRequest & {customerUid?:string};const header=request.headers.get("authorization")??"";let uid=body.customerUid; if(header.startsWith("Bearer ")){try{uid=(await adminAuth.verifyIdToken(header.slice(7),true)).uid;}catch{uid=body.customerUid;}} if(!body?.portrait?.packageId||!body?.portrait?.subjects||!body?.fulfillment?.type)return NextResponse.json({success:false,message:"Incomplete pricing request."},{status:400});const pricing=await calculateOrderPrice({...body,customerUid:uid});return NextResponse.json({success:true,pricing});}catch(error){return NextResponse.json({success:false,message:error instanceof Error?error.message:"Unable to calculate pricing."},{status:400});}}

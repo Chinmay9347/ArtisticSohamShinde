@@ -1,0 +1,1 @@
+export type ContactFAQProps = Record<string, never>;

@@ -1,0 +1,249 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function hasUserProfile(uid) {
+      return exists(userPath(uid));
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && hasUserProfile(request.auth.uid)
+        && get(userPath(request.auth.uid)).data.role == "ADMIN";
+    }
+
+    function isArtist() {
+      return signedIn()
+        && hasUserProfile(request.auth.uid)
+        && get(userPath(request.auth.uid)).data.role == "ARTIST";
+    }
+
+    function isCustomer() {
+      return signedIn()
+        && hasUserProfile(request.auth.uid)
+        && get(userPath(request.auth.uid)).data.role == "CUSTOMER";
+    }
+
+    function validArtistStatus(status) {
+      return status in [
+        "ARTWORK_QUEUE",
+        "DRAWING",
+        "QUALITY_CHECK",
+        "PACKAGED",
+        "SHIPPED",
+        "DELIVERED",
+        "COMPLETED"
+      ];
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+
+      /*
+       * A normal registration may only create its own CUSTOMER
+       * profile. ADMIN/ARTIST profiles must be created by an ADMIN.
+       */
+      allow create: if isAdmin()
+        || (
+          isOwner(uid)
+          && request.resource.data.role == "CUSTOMER"
+          && request.resource.data.uid == uid
+        );
+
+      /*
+       * Customers can edit their profile but cannot elevate
+       * their role or activate/deactivate the account.
+       */
+      allow update: if isAdmin()
+        || (
+          isOwner(uid)
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.isActive == resource.data.isActive
+          && request.resource.data.uid == resource.data.uid
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    match /pricingConfigs/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /gallery/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /categories/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /offers/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    /*
+     * Orders are created only by the authenticated server API
+     * using Firebase Admin SDK. This prevents clients from
+     * inventing prices, payment amounts, roles, or statuses.
+     */
+    match /orders/{id} {
+      allow read: if isAdmin()
+        || (
+          isCustomer()
+          && resource.data.customer.uid == request.auth.uid
+        )
+        || (
+          isArtist()
+          && (resource.data.get("artist", {}).get("uid", "") == request.auth.uid || resource.data.get("artistId", "") == request.auth.uid)
+        );
+
+      allow create: if false;
+
+      /*
+       * Admin can perform workflow, assignment, payment
+       * verification and shipping operations.
+       */
+      allow update: if isAdmin()
+
+        /*
+         * Artist may only change artwork/workflow fields on
+         * orders assigned to that artist.
+         */
+        || (
+          isArtist()
+          && (resource.data.get("artist", {}).get("uid", "") == request.auth.uid || resource.data.get("artistId", "") == request.auth.uid)
+          && request.resource.data.customer.uid
+              == resource.data.customer.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly([
+                "artwork",
+                "shipping",
+                "status",
+                "timeline",
+                "updatedAt"
+              ])
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(["status"])
+            || validArtistStatus(
+              request.resource.data.status
+            )
+          )
+        );
+
+      /*
+       * Customer-side direct order updates are disabled.
+       * Payment submission is handled through the authenticated
+       * server API so customers cannot forge VERIFIED status.
+       */
+      allow delete: if isAdmin();
+    }
+
+    match /paymentAccounts/{id} {
+      /*
+       * Enabled payment destinations are intentionally public
+       * because customers need them on the payment page.
+       */
+      //allow read: if isAdmin()
+        //|| resource.data.enabled == true;
+      allow read: if signedIn() && resource.data.enabled == true;
+
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /referralCampaigns/{id} {
+      allow read: if isAdmin()
+        || resource.data.enabled == true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /referrals/{id} {
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && (
+            resource.data.referrerUserId == request.auth.uid
+            || resource.data.referredUserId == request.auth.uid
+          )
+        );
+
+      allow create: if isAdmin()
+        || (
+          signedIn()
+          && request.resource.data.referrerUserId == request.auth.uid
+          && request.resource.data.referredUserId == null
+          && request.resource.data.referredOrderId == null
+          && request.resource.data.status == "PENDING"
+        );
+
+      allow update, delete: if isAdmin();
+    }
+
+    match /notifications/{id} {
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.userId == request.auth.uid
+        );
+
+      allow create: if isAdmin();
+
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.userId == request.auth.uid
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    match /couponUsageLogs/{id} {
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.userId == request.auth.uid
+        );
+
+      allow create: if isAdmin()
+        || (
+          signedIn()
+          && request.resource.data.userId == request.auth.uid
+        );
+
+      allow update, delete: if isAdmin();
+    }
+
+    match /siteContent/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /contactMessages/{id} {
+      allow create: if request.resource.data.status == "NEW"
+        && request.resource.data.createdAt is timestamp;
+
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

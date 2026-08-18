@@ -1,0 +1,1 @@
+export type RegisterFormProps = Record<string, never>;

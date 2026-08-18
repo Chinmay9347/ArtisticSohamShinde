@@ -1,0 +1,1 @@
+export type ContactFormProps = Record<string, never>;

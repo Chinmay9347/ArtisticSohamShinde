@@ -1,0 +1,1 @@
+export type CommissionFAQProps = Record<string, never>;
